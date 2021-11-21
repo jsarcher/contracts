@@ -1,0 +1,86 @@
+scilla_version 0
+
+(***************************************************)
+(*               Associated library                *)
+(***************************************************)
+import IntUtils
+library ZilWatchSupporterRegistration
+
+let one_msg = 
+  fun (msg : Message) => 
+  let nil_msg = Nil {Message} in
+  Cons {Message} msg nil_msg
+
+(* Error events *)
+type Error =
+| CodeIsAlreadyRegistered
+| CodeIsRegistrationEnded
+
+let make_error =
+  fun (result : Error) =>
+    let result_code = 
+      match result with
+      | CodeIsAlreadyRegistered => Int32 -1
+      | CodeIsRegistrationEnded => Int32 -2
+      end
+    in
+    { _exception : "Error"; code : result_code }
+
+let zero = Uint128 0
+
+(***************************************************)
+(*             The contract definition             *)
+(***************************************************)
+
+contract ZilWatchSupporterRegistration
+(
+  contract_owner: ByStr20,
+  duration_blocks: Uint128
+)
+
+field map_wallets : Map ByStr20 BNum = Emp ByStr20 BNum
+field end_block: BNum = builtin badd _creation_block duration_blocks
+
+(**************************************)
+(*             Procedures             *)
+(**************************************)
+
+procedure ThrowError(err : Error)
+  e = make_error err;
+  throw e
+end
+
+(***************************************)
+(*             Transitions             *)
+(***************************************)
+
+(* @dev: Register sender wallet, i.e., _sender. *)
+transition RegisterWallet()
+  current_block <- & BLOCKNUMBER;
+  end_block_num <- end_block;
+
+  is_registration_over = builtin blt end_block_num current_block;
+  match is_registration_over with
+  | True =>
+    (* Registration period has ended. *)
+    err = CodeIsRegistrationEnded;
+    ThrowError err
+  | False =>
+    is_registered <- exists map_wallets[_sender];
+    match is_registered with
+    | True =>
+      (* Wallet is already registered. *)
+      err = CodeIsAlreadyRegistered;
+      ThrowError err
+    | False =>
+      (* Register wallet in the map. *)
+      map_wallets[_sender] := current_block;
+
+      (* Registration successful. *)
+      msg_to_sender = {_tag : "RegisterSuccessCallback"; _recipient : _sender; _amount : zero;
+                        _address : _sender; _block_number : current_block};
+      msgs = one_msg msg_to_sender;
+      send msgs
+    end
+  end
+end
